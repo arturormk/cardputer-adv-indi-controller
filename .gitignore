@@ -1,0 +1,5 @@
+.pio/
+.vscode/
+.agents/
+.codex/
+include/config.h
