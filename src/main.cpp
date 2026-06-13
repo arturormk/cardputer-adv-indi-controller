@@ -12,6 +12,7 @@
 #include "app/ConfigStore.h"
 #include "app/RuntimeConfig.h"
 #include "camera/CameraModel.h"
+#include "gnss/GnssReceiver.h"
 #include "indi/IndiProtocol.h"
 #include "indi/IndiPropertyCache.h"
 #include "indi/IndiWriter.h"
@@ -43,7 +44,18 @@ app::ConfigStore configStore;
 app::RuntimeConfig activeConfig;
 app::RuntimeConfig editConfig;
 
-enum class Screen { Devices, Properties, Members, Mount, Camera, Settings, WifiList, TextInput };
+enum class Screen {
+  Devices,
+  Properties,
+  Members,
+  Mount,
+  MountGps,
+  Camera,
+  Gnss,
+  Settings,
+  WifiList,
+  TextInput
+};
 Screen screen = Screen::Devices;
 size_t selectedDevice = 0;
 size_t selectedProperty = 0;
@@ -53,6 +65,8 @@ enum class CameraCommandKind { None, Iso };
 CameraCommandKind pendingCameraCommand = CameraCommandKind::None;
 char pendingCameraMember[indi::kSwitchOptionNameSize]{};
 uint32_t pendingCameraCommandUntil = 0;
+char mountUtcSource[indi::kTextSize]{};
+uint32_t mountUtcSourceMs = 0;
 
 enum class AxisMotion { None, Negative, Positive };
 AxisMotion nsMotion = AxisMotion::None;
@@ -155,7 +169,10 @@ camera::Model currentCamera() {
 }
 
 void clampSelection() {
-  if (screen == Screen::Settings || screen == Screen::WifiList || screen == Screen::TextInput) return;
+  if (screen == Screen::Gnss || screen == Screen::Settings || screen == Screen::WifiList ||
+      screen == Screen::TextInput) {
+    return;
+  }
   if (propertyCache.deviceCount() == 0) {
     selectedDevice = selectedProperty = selectedMember = 0;
     screen = Screen::Devices;
@@ -167,7 +184,8 @@ void clampSelection() {
   if (propertyCount == 0) {
     selectedProperty = selectedMember = 0;
     if (screen == Screen::Members) screen = Screen::Properties;
-    else if (screen == Screen::Mount || screen == Screen::Camera) screen = Screen::Devices;
+    else if (screen == Screen::Mount || screen == Screen::MountGps || screen == Screen::Camera)
+      screen = Screen::Devices;
     return;
   }
   if (selectedProperty >= propertyCount) selectedProperty = propertyCount - 1;
@@ -283,6 +301,89 @@ bool sendNumberCommand(const indi::Property* property, const char* member, doubl
   const size_t length = indi::Writer::buildNumberVector(xml, sizeof(xml), *property, member, value);
   if (!length) return false;
   return indiClient.write(reinterpret_cast<const uint8_t*>(xml), length) == length;
+}
+
+bool isWritable(const indi::Property* property, indi::PropertyType type) {
+  return property && property->type == type &&
+         (property->permission == indi::Permission::ReadWrite ||
+          property->permission == indi::Permission::WriteOnly);
+}
+
+void syncMountFromGnss() {
+  mount::Model model = currentMount();
+  const gnss::Snapshot snapshot = gnss::current();
+  const indi::Property* location = model.property("GEOGRAPHIC_COORD");
+  const indi::Property* time = model.property("TIME_UTC");
+  const indi::Member* latitude = model.member("GEOGRAPHIC_COORD", "LAT");
+  const indi::Member* longitude = model.member("GEOGRAPHIC_COORD", "LONG");
+  const indi::Member* elevation = model.member("GEOGRAPHIC_COORD", "ELEV");
+  const indi::Member* utc = model.member("TIME_UTC", "UTC");
+  const indi::Member* offset = model.member("TIME_UTC", "OFFSET");
+
+  if (!indiClient.connected()) {
+    setFeedback("INDI connection unavailable", TFT_RED);
+    return;
+  }
+  if (!snapshot.present || !snapshot.fixValid || !snapshot.locationValid ||
+      !snapshot.dateTimeValid) {
+    setFeedback("Valid GPS fix and UTC required", TFT_YELLOW);
+    return;
+  }
+  if (!isWritable(location, indi::PropertyType::Number) ||
+      !isWritable(time, indi::PropertyType::Text) || !latitude || !longitude || !elevation ||
+      !utc || !offset) {
+    setFeedback("Mount location/time not writable", TFT_YELLOW);
+    return;
+  }
+
+  char utcValue[32];
+  snprintf(utcValue, sizeof(utcValue), "%04u-%02u-%02uT%02u:%02u:%02u", snapshot.year,
+           snapshot.month, snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);
+  const indi::NumberValue locationValues[] = {
+      {latitude->name, snapshot.latitude},
+      {longitude->name, mount::longitudeToIndi(snapshot.longitude)},
+      {elevation->name, elevation->numberValue},
+  };
+  const indi::TextValue timeValues[] = {{utc->name, utcValue}, {offset->name, "0"}};
+  char locationXml[512];
+  char timeXml[512];
+  const size_t locationLength = indi::Writer::buildNumberVector(
+      locationXml, sizeof(locationXml), *location, locationValues, 3);
+  const size_t timeLength =
+      indi::Writer::buildTextVector(timeXml, sizeof(timeXml), *time, timeValues, 2);
+  if (!locationLength || !timeLength) {
+    setFeedback("GPS sync serialization failed", TFT_RED);
+    return;
+  }
+
+  const size_t locationWritten =
+      indiClient.write(reinterpret_cast<const uint8_t*>(locationXml), locationLength);
+  const size_t timeWritten = locationWritten == locationLength
+                                 ? indiClient.write(reinterpret_cast<const uint8_t*>(timeXml),
+                                                    timeLength)
+                                 : 0;
+  if (locationWritten != locationLength || timeWritten != timeLength) {
+    setFeedback("GPS sync write failed", TFT_RED);
+    return;
+  }
+  Serial.printf("[indi] sent GPS location and UTC to %s\n", location->device);
+  setFeedback("GPS location and UTC sent");
+}
+
+void resetMountUtcClock() {
+  mountUtcSource[0] = '\0';
+  mountUtcSourceMs = millis();
+}
+
+bool currentMountUtc(char* output, size_t outputSize) {
+  const indi::Member* utc = currentMount().member("TIME_UTC", "UTC");
+  if (!utc || !*utc->text) return false;
+  if (strcmp(mountUtcSource, utc->text) != 0) {
+    copyValue(mountUtcSource, utc->text);
+    mountUtcSourceMs = millis();
+  }
+  return mount::addUtcSeconds(mountUtcSource, (millis() - mountUtcSourceMs) / 1000, output,
+                              outputSize);
 }
 
 const char* motionMember(const indi::Property* property, const char* preferred, size_t fallback) {
@@ -675,6 +776,7 @@ void clearSavedConfiguration() {
 
 void drawStatusBar() {
   auto& display = canvas;
+  const gnss::Snapshot gnssSnapshot = gnss::current();
   display.fillRect(0, 0, display.width(), 18, TFT_DARKGREY);
   display.setTextColor(WiFi.status() == WL_CONNECTED ? TFT_GREEN : TFT_RED, TFT_DARKGREY);
   display.setCursor(3, 4);
@@ -682,8 +784,16 @@ void drawStatusBar() {
   display.setTextColor(indiClient.connected() ? TFT_GREEN : TFT_RED, TFT_DARKGREY);
   display.setCursor(48, 4);
   display.print("INDI");
-  display.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  const uint16_t gnssColor = !gnssSnapshot.present
+                                 ? TFT_RED
+                                 : (gnssSnapshot.fixDimension == gnss::FixDimension::ThreeD
+                                        ? TFT_GREEN
+                                        : TFT_YELLOW);
+  display.setTextColor(gnssColor, TFT_DARKGREY);
   display.setCursor(91, 4);
+  display.print("GNSS");
+  display.setTextColor(TFT_WHITE, TFT_DARKGREY);
+  display.setCursor(126, 4);
   display.printf("%u/%u", static_cast<unsigned>(propertyCache.deviceCount()),
                  static_cast<unsigned>(propertyCache.propertyCount()));
   const int batteryLevel = M5.Power.getBatteryLevel();
@@ -712,7 +822,10 @@ void drawHeader(const char* title, const char* hint) {
 
 void drawDevices() {
   auto& display = canvas;
-  drawHeader("INDI Devices", "Arrows move/open | S Settings");
+  const gnss::Snapshot gnssSnapshot = gnss::current();
+  drawHeader("INDI Devices",
+             gnssSnapshot.present ? "Arrows/open | G GNSS | S Settings"
+                                  : "Arrows move/open | S Settings");
   if (propertyCache.deviceCount() == 0) {
     display.setTextColor(TFT_LIGHTGREY, TFT_BLACK);
     display.setCursor(4, 43);
@@ -730,6 +843,50 @@ void drawDevices() {
                      static_cast<unsigned>(device.propertyCount));
     }
   }
+}
+
+void drawGnss() {
+  auto& display = canvas;
+  const gnss::Snapshot snapshot = gnss::current();
+  drawHeader("GNSS", "Backspace returns to devices");
+  display.setTextColor(TFT_WHITE, TFT_BLACK);
+  display.setCursor(4, 39);
+  if (snapshot.present) {
+    display.printf("Module: detected @ %lu baud", static_cast<unsigned long>(snapshot.baudRate));
+  } else if (snapshot.lastMessageMs) {
+    display.printf("Module: stale (%lu s)", static_cast<unsigned long>(snapshot.messageAgeMs / 1000));
+  } else {
+    display.print("Module: waiting for NMEA");
+  }
+  display.setCursor(4, 54);
+  const char* fix =
+      snapshot.fixDimension == gnss::FixDimension::ThreeD
+          ? "3D"
+          : (snapshot.fixDimension == gnss::FixDimension::TwoD ? "2D" : "none");
+  display.printf("Fix: %-4s  Satellites: %u", fix,
+                 static_cast<unsigned>(snapshot.satellites));
+  display.setCursor(4, 69);
+  if (snapshot.dateTimeValid) {
+    display.printf("UTC: %04u-%02u-%02u %02u:%02u:%02u", snapshot.year, snapshot.month,
+                   snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);
+  } else {
+    display.print("UTC: --");
+  }
+  display.setCursor(4, 84);
+  if (snapshot.locationValid) display.printf("Lat: %+.6f", snapshot.latitude);
+  else display.print("Lat: --");
+  display.setCursor(4, 99);
+  if (snapshot.locationValid) display.printf("Lon: %+.6f", snapshot.longitude);
+  else display.print("Lon: --");
+  display.setCursor(164, 54);
+  if (snapshot.hdopValid) display.printf("HDOP %.1f", snapshot.hdop);
+  else display.print("HDOP --");
+  display.setCursor(164, 84);
+  if (snapshot.fixDimension == gnss::FixDimension::ThreeD && snapshot.altitudeValid)
+    display.printf("Elev %.1fm", snapshot.altitudeMeters);
+  display.setCursor(4, 114);
+  if (*snapshot.firmwareVersion) display.printf("FW: %.35s", snapshot.firmwareVersion);
+  else display.print("FW: --");
 }
 
 void drawProperties() {
@@ -814,7 +971,7 @@ void drawMount() {
     drawDevices();
     return;
   }
-  drawHeader(device->name, "Arrows | [ ] speed | C conn | A!");
+  drawHeader(device->name, "Arrows | [] speed | G GPS | C | A!");
 
   const indi::Member* connection = model.activeMember("CONNECTION");
   const bool connected = connection && strcmp(connection->name, "CONNECT") == 0;
@@ -865,6 +1022,48 @@ void drawMount() {
   const indi::Member* speed = model.activeMember("TELESCOPE_SLEW_RATE");
   display.setCursor(4, 100);
   display.printf("Speed: %-18.18s", displayMemberName(speed));
+}
+
+void drawMountGps() {
+  auto& display = canvas;
+  const indi::Device* device = currentDevice();
+  mount::Model model = currentMount();
+  if (!device || !model.isMount()) {
+    screen = Screen::Devices;
+    drawDevices();
+    return;
+  }
+  drawHeader("Mount GPS Sync", "Enter sends GPS | Backspace mount");
+  const indi::Member* latitude = model.member("GEOGRAPHIC_COORD", "LAT");
+  const indi::Member* longitude = model.member("GEOGRAPHIC_COORD", "LONG");
+  const gnss::Snapshot snapshot = gnss::current();
+
+  display.setTextColor(TFT_WHITE, TFT_BLACK);
+  display.setCursor(4, 39);
+  if (latitude) display.printf("Mount LAT: %+.6f", latitude->numberValue);
+  else display.print("Mount LAT: --");
+  display.setCursor(4, 54);
+  if (longitude) display.printf("Mount LON: %+.6f", mount::longitudeFromIndi(longitude->numberValue));
+  else display.print("Mount LON: --");
+  display.setCursor(4, 69);
+  char mountUtc[32];
+  if (currentMountUtc(mountUtc, sizeof(mountUtc))) display.printf("Mount UTC: %s", mountUtc);
+  else display.print("Mount UTC: --");
+
+  display.setTextColor(snapshot.locationValid ? TFT_CYAN : TFT_YELLOW, TFT_BLACK);
+  display.setCursor(4, 84);
+  if (snapshot.locationValid) display.printf("GPS   LAT: %+.6f", snapshot.latitude);
+  else display.print("GPS   LAT: --");
+  display.setCursor(4, 99);
+  if (snapshot.locationValid) display.printf("GPS   LON: %+.6f", snapshot.longitude);
+  else display.print("GPS   LON: --");
+  display.setCursor(4, 114);
+  if (snapshot.dateTimeValid) {
+    display.printf("GPS UTC: %04u-%02u-%02uT%02u:%02u:%02u", snapshot.year, snapshot.month,
+                   snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);
+  } else {
+    display.print("GPS UTC: --");
+  }
 }
 
 void drawCamera() {
@@ -964,7 +1163,9 @@ void draw() {
     case Screen::Properties: drawProperties(); break;
     case Screen::Members: drawMembers(); break;
     case Screen::Mount: drawMount(); break;
+    case Screen::MountGps: drawMountGps(); break;
     case Screen::Camera: drawCamera(); break;
+    case Screen::Gnss: drawGnss(); break;
     case Screen::Settings: drawSettings(); break;
     case Screen::WifiList: drawWifiList(); break;
     case Screen::TextInput: drawTextInput(); break;
@@ -1032,6 +1233,19 @@ void handleKeyboard() {
   int direction = 0;
   for (char key : keys.word) {
     if (key == 'a' || key == 'A') emergencyAbort = true;
+    if ((key == 'g' || key == 'G') && screen == Screen::Devices && gnss::current().present) {
+      screen = Screen::Gnss;
+      lastRedraw = 0;
+      return;
+    }
+    if ((key == 'g' || key == 'G') && screen == Screen::Mount) {
+      stopMountMotion();
+      motionArmed = false;
+      resetMountUtcClock();
+      screen = Screen::MountGps;
+      lastRedraw = 0;
+      return;
+    }
     if ((key == 's' || key == 'S') && screen == Screen::Devices) {
       openSettings();
       return;
@@ -1048,6 +1262,8 @@ void handleKeyboard() {
         toggleDeviceConnection();
         handled = true;
       }
+    } else if (screen == Screen::MountGps) {
+      // Only Enter sends and Backspace returns from the comparison screen.
     } else if (screen == Screen::Camera) {
       if (key == '[') {
         changeExposure(-1);
@@ -1132,6 +1348,9 @@ void handleKeyboard() {
       screen = Screen::Properties;
       selectedProperty = 0;
       handled = true;
+    } else if (screen == Screen::MountGps) {
+      syncMountFromGnss();
+      handled = true;
     } else if (screen == Screen::Camera) {
       screen = Screen::Properties;
       selectedProperty = 0;
@@ -1146,7 +1365,12 @@ void handleKeyboard() {
       stopMountMotion();
       motionArmed = false;
       screen = Screen::Devices;
+    } else if (screen == Screen::MountGps) {
+      screen = Screen::Mount;
+      motionArmed = false;
     } else if (screen == Screen::Camera) {
+      screen = Screen::Devices;
+    } else if (screen == Screen::Gnss) {
       screen = Screen::Devices;
     }
     handled = true;
@@ -1175,6 +1399,7 @@ void setup() {
   Serial.begin(115200);
   delay(100);
   Serial.println("[app] Cardputer INDI Controller");
+  if (!gnss::begin()) Serial.println("[gnss] failed to start receiver task");
   loadConfiguration();
   if (app::validWifi(activeConfig) && app::validServer(activeConfig)) beginWifi();
   else openSettings();

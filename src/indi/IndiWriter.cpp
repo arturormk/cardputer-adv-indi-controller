@@ -80,16 +80,49 @@ size_t Writer::buildSwitchVector(char* output, size_t capacity, const Property& 
 
 size_t Writer::buildNumberVector(char* output, size_t capacity, const Property& property,
                                  const char* memberName, double value) {
+  const NumberValue values[] = {{memberName, value}};
+  return buildNumberVector(output, capacity, property, values, 1);
+}
+
+size_t Writer::buildNumberVector(char* output, size_t capacity, const Property& property,
+                                 const NumberValue* values, size_t valueCount) {
   Buffer buffer(output, capacity);
-  char number[32];
-  snprintf(number, sizeof(number), "%.10g", value);
+  if (valueCount && !values) return 0;
   if (!buffer.append("<newNumberVector device=\"") || !buffer.appendEscaped(property.device) ||
       !buffer.append("\" name=\"") || !buffer.appendEscaped(property.name) ||
-      !buffer.append("\"><oneNumber name=\"") || !buffer.appendEscaped(memberName) ||
-      !buffer.append("\">") || !buffer.append(number) ||
-      !buffer.append("</oneNumber></newNumberVector>\n")) {
+      !buffer.append("\">")) {
     return 0;
   }
+  for (size_t i = 0; i < valueCount; ++i) {
+    char number[32];
+    snprintf(number, sizeof(number), "%.10g", values[i].value);
+    if (!values[i].memberName || !buffer.append("<oneNumber name=\"") ||
+        !buffer.appendEscaped(values[i].memberName) || !buffer.append("\">") ||
+        !buffer.append(number) || !buffer.append("</oneNumber>")) {
+      return 0;
+    }
+  }
+  if (!buffer.append("</newNumberVector>\n")) return 0;
+  return buffer.size();
+}
+
+size_t Writer::buildTextVector(char* output, size_t capacity, const Property& property,
+                               const TextValue* values, size_t valueCount) {
+  Buffer buffer(output, capacity);
+  if (valueCount && !values) return 0;
+  if (!buffer.append("<newTextVector device=\"") || !buffer.appendEscaped(property.device) ||
+      !buffer.append("\" name=\"") || !buffer.appendEscaped(property.name) ||
+      !buffer.append("\">")) {
+    return 0;
+  }
+  for (size_t i = 0; i < valueCount; ++i) {
+    if (!values[i].memberName || !values[i].value || !buffer.append("<oneText name=\"") ||
+        !buffer.appendEscaped(values[i].memberName) || !buffer.append("\">") ||
+        !buffer.appendEscaped(values[i].value) || !buffer.append("</oneText>")) {
+      return 0;
+    }
+  }
+  if (!buffer.append("</newTextVector>\n")) return 0;
   return buffer.size();
 }
 

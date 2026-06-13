@@ -4,6 +4,17 @@
 
 namespace mount {
 
+double longitudeToIndi(double longitude) {
+  while (longitude < 0) longitude += 360;
+  while (longitude >= 360) longitude -= 360;
+  return longitude;
+}
+
+double longitudeFromIndi(double longitude) {
+  longitude = longitudeToIndi(longitude);
+  return longitude > 180 ? longitude - 360 : longitude;
+}
+
 const indi::Property* Model::property(const char* name) const {
   return device_ ? cache_.findProperty(device_, name) : nullptr;
 }

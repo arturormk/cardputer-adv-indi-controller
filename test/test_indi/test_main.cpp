@@ -10,6 +10,7 @@
 #include "mount/Astronomy.h"
 #include "app/RuntimeConfig.h"
 #include "camera/CameraModel.h"
+#include "gnss/GnssState.h"
 
 using namespace indi;
 
@@ -128,6 +129,43 @@ void test_writes_alert_number_vector() {
       0, Writer::buildNumberVector(output, sizeof(output), *property, "CCD_EXPOSURE_VALUE", 2));
 }
 
+void test_writes_complete_location_and_time_vectors() {
+  feedChunks("<defNumberVector device=\"Mount &amp; Scope\" name=\"GEOGRAPHIC_COORD\" perm=\"rw\">"
+             "<defNumber name=\"LAT\">0</defNumber><defNumber name=\"LONG\">0</defNumber>"
+             "<defNumber name=\"ELEV\">123</defNumber></defNumberVector>"
+             "<defTextVector device=\"Mount &amp; Scope\" name=\"TIME_UTC\" perm=\"rw\">"
+             "<defText name=\"UTC\"></defText><defText name=\"OFFSET\"></defText>"
+             "</defTextVector>", 9);
+  const Property* location = cache.findProperty("Mount & Scope", "GEOGRAPHIC_COORD");
+  const NumberValue locationValues[] = {{"LAT", 41.5}, {"LONG", 357.75}, {"ELEV", 123}};
+  char output[512];
+  TEST_ASSERT_NOT_EQUAL(
+      0, Writer::buildNumberVector(output, sizeof(output), *location, locationValues, 3));
+  TEST_ASSERT_EQUAL_STRING(
+      "<newNumberVector device=\"Mount &amp; Scope\" name=\"GEOGRAPHIC_COORD\">"
+      "<oneNumber name=\"LAT\">41.5</oneNumber><oneNumber name=\"LONG\">357.75</oneNumber>"
+      "<oneNumber name=\"ELEV\">123</oneNumber></newNumberVector>\n",
+      output);
+
+  const Property* time = cache.findProperty("Mount & Scope", "TIME_UTC");
+  const TextValue timeValues[] = {{"UTC", "2026-06-13T10:24:04"}, {"OFFSET", "0<&"}};
+  TEST_ASSERT_NOT_EQUAL(0, Writer::buildTextVector(output, sizeof(output), *time, timeValues, 2));
+  TEST_ASSERT_EQUAL_STRING(
+      "<newTextVector device=\"Mount &amp; Scope\" name=\"TIME_UTC\">"
+      "<oneText name=\"UTC\">2026-06-13T10:24:04</oneText>"
+      "<oneText name=\"OFFSET\">0&lt;&amp;</oneText></newTextVector>\n",
+      output);
+  char tooSmall[20];
+  TEST_ASSERT_EQUAL(0, Writer::buildTextVector(tooSmall, sizeof(tooSmall), *time, timeValues, 2));
+}
+
+void test_converts_indi_longitude_ranges() {
+  TEST_ASSERT_TRUE(fabs(mount::longitudeToIndi(-2.25) - 357.75) < 0.000001);
+  TEST_ASSERT_TRUE(fabs(mount::longitudeToIndi(362.25) - 2.25) < 0.000001);
+  TEST_ASSERT_TRUE(fabs(mount::longitudeFromIndi(357.75) + 2.25) < 0.000001);
+  TEST_ASSERT_TRUE(fabs(mount::longitudeFromIndi(180) - 180) < 0.000001);
+}
+
 void test_writes_single_switch_member_for_large_vectors() {
   feedChunks("<defSwitchVector device=\"Camera\" name=\"CCD_ISO\" perm=\"rw\">"
              "<defSwitch name=\"ISO4\">On</defSwitch><defSwitch name=\"ISO5\">Off</defSwitch>"
@@ -206,6 +244,15 @@ void test_computes_horizontal_coordinates() {
   TEST_ASSERT_TRUE(azimuth > 89 && azimuth < 91);
 }
 
+void test_advances_utc_across_date_boundaries() {
+  char output[32];
+  TEST_ASSERT_TRUE(mount::addUtcSeconds("2026-12-31T23:59:59", 2, output, sizeof(output)));
+  TEST_ASSERT_EQUAL_STRING("2027-01-01T00:00:01", output);
+  TEST_ASSERT_TRUE(mount::addUtcSeconds("2028-02-28T23:59:59", 2, output, sizeof(output)));
+  TEST_ASSERT_EQUAL_STRING("2028-02-29T00:00:01", output);
+  TEST_ASSERT_FALSE(mount::addUtcSeconds("invalid", 1, output, sizeof(output)));
+}
+
 void test_validates_runtime_configuration() {
   app::RuntimeConfig config{};
   strcpy(config.ssid, "Observatory");
@@ -218,6 +265,71 @@ void test_validates_runtime_configuration() {
   strcpy(config.host, "192.168.1.14");
   config.port = 0;
   TEST_ASSERT_FALSE(app::validServer(config));
+}
+
+void test_gnss_parses_valid_rmc_and_gga() {
+  gnss::State state;
+  const char* rmc =
+      "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*6A\r\n";
+  for (const char* value = rmc; *value; ++value) state.feed(*value, 1000, 9600);
+  const char* gga =
+      "$GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,*47\r\n";
+  for (const char* value = gga; *value; ++value) state.feed(*value, 1200, 9600);
+  const gnss::Snapshot snapshot = state.snapshot(1500);
+  TEST_ASSERT_TRUE(snapshot.present);
+  TEST_ASSERT_TRUE(snapshot.fixValid);
+  TEST_ASSERT_TRUE(snapshot.dateTimeValid);
+  TEST_ASSERT_TRUE(snapshot.locationValid);
+  TEST_ASSERT_TRUE(snapshot.hdopValid);
+  TEST_ASSERT_TRUE(snapshot.altitudeValid);
+  TEST_ASSERT_EQUAL_UINT16(1994, snapshot.year);
+  TEST_ASSERT_EQUAL_UINT8(8, snapshot.satellites);
+  TEST_ASSERT_TRUE(fabs(snapshot.latitude - 48.1173) < 0.0001);
+  TEST_ASSERT_TRUE(fabs(snapshot.longitude - 11.5166667) < 0.0001);
+  TEST_ASSERT_TRUE(fabs(snapshot.hdop - 0.9) < 0.0001);
+  TEST_ASSERT_TRUE(fabs(snapshot.altitudeMeters - 545.4) < 0.0001);
+}
+
+void test_gnss_requires_valid_checksum_and_times_out_presence() {
+  gnss::State state;
+  const char* invalid =
+      "$GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W*00\r\n";
+  for (const char* value = invalid; *value; ++value) state.feed(*value, 1000, 9600);
+  TEST_ASSERT_FALSE(state.snapshot(1000).present);
+  const char* valid =
+      "$GPRMC,123519,V,,,,,,,230394,,,N*51\r\n";
+  for (const char* value = valid; *value; ++value) state.feed(*value, 2000, 38400);
+  TEST_ASSERT_TRUE(state.snapshot(2000).present);
+  const gnss::Snapshot stale = state.snapshot(2000 + gnss::kPresenceTimeoutMs + 1);
+  TEST_ASSERT_FALSE(stale.present);
+  TEST_ASSERT_EQUAL_UINT32(gnss::kPresenceTimeoutMs + 1, stale.messageAgeMs);
+}
+
+void test_gnss_detects_generic_sentence_and_firmware_response() {
+  gnss::State state;
+  const char* text = "$GPTXT,01,01,02,u-blox ag - www.u-blox.com*50\r\n";
+  for (const char* value = text; *value; ++value) state.feed(*value, 1000, 115200);
+  const gnss::Snapshot textSnapshot = state.snapshot(1000);
+  TEST_ASSERT_TRUE(textSnapshot.present);
+  TEST_ASSERT_EQUAL_STRING("u-blox ag - www.u-blox.com", textSnapshot.firmwareVersion);
+  const char* firmware = "$PCAS06,VER,1.2.3*76\r\n";
+  for (const char* value = firmware; *value; ++value) state.feed(*value, 1200, 115200);
+  const gnss::Snapshot snapshot = state.snapshot(1200);
+  TEST_ASSERT_EQUAL_UINT32(115200, snapshot.baudRate);
+  TEST_ASSERT_EQUAL_STRING("VER,1.2.3", snapshot.firmwareVersion);
+}
+
+void test_gnss_tracks_explicit_gsa_fix_dimension() {
+  gnss::State state;
+  const char* twoD = "$GPGSA,A,2,04,05,,09,12,,,,,,,1.8,1.0,1.5*18\r\n";
+  for (const char* value = twoD; *value; ++value) state.feed(*value, 1000, 115200);
+  TEST_ASSERT_EQUAL(gnss::FixDimension::TwoD, state.snapshot(1000).fixDimension);
+  const char* threeD = "$GPGSA,A,3,04,05,,09,12,,,,,,,1.8,1.0,1.5*19\r\n";
+  for (const char* value = threeD; *value; ++value) state.feed(*value, 1200, 115200);
+  const gnss::Snapshot snapshot = state.snapshot(1200);
+  TEST_ASSERT_EQUAL(gnss::FixDimension::ThreeD, snapshot.fixDimension);
+  TEST_ASSERT_TRUE(snapshot.hdopValid);
+  TEST_ASSERT_TRUE(fabs(snapshot.hdop - 1.0) < 0.0001);
 }
 
 void test_updates_existing_property_and_decodes_entities() {
@@ -304,13 +416,20 @@ int main(int argc, char** argv) {
   RUN_TEST(test_writes_abort_using_discovered_member);
   RUN_TEST(test_writes_number_vector);
   RUN_TEST(test_writes_alert_number_vector);
+  RUN_TEST(test_writes_complete_location_and_time_vectors);
+  RUN_TEST(test_converts_indi_longitude_ranges);
   RUN_TEST(test_writes_single_switch_member_for_large_vectors);
   RUN_TEST(test_camera_model_detects_driver_and_controls);
   RUN_TEST(test_camera_model_retains_large_switch_vectors);
   RUN_TEST(test_mount_model_detects_capabilities_and_active_rate);
   RUN_TEST(test_mount_model_detects_disconnected_standard_telescope);
   RUN_TEST(test_computes_horizontal_coordinates);
+  RUN_TEST(test_advances_utc_across_date_boundaries);
   RUN_TEST(test_validates_runtime_configuration);
+  RUN_TEST(test_gnss_parses_valid_rmc_and_gga);
+  RUN_TEST(test_gnss_requires_valid_checksum_and_times_out_presence);
+  RUN_TEST(test_gnss_detects_generic_sentence_and_firmware_response);
+  RUN_TEST(test_gnss_tracks_explicit_gsa_fix_dimension);
   RUN_TEST(test_updates_existing_property_and_decodes_entities);
   RUN_TEST(test_skips_blob_payload_and_continues);
   RUN_TEST(test_deletes_property);

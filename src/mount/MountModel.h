@@ -4,6 +4,9 @@
 
 namespace mount {
 
+double longitudeToIndi(double longitude);
+double longitudeFromIndi(double longitude);
+
 class Model {
  public:
   Model(const indi::PropertyCache& cache, const char* device) : cache_(cache), device_(device) {}
@@ -22,4 +25,3 @@ class Model {
 };
 
 }  // namespace mount
-
