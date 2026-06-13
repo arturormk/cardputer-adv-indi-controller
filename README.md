@@ -7,6 +7,8 @@ The controller discovers INDI devices at runtime and provides dedicated screens 
 mounts and cameras, plus a generic read-only property inspector. It is designed for common field
 operations without requiring a phone or laptop at the telescope.
 
+![Cardputer ADV running the INDI controller with a Celestron GPS mount](docs/images/indi_motor.png)
+
 ## Features
 
 - On-device Wi-Fi selection and persistent INDI server configuration.
