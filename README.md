@@ -243,7 +243,7 @@ the next stable `1.2` release.
 
 Pushing a `v*` tag, such as `v1.0`, runs the GitHub Actions release workflow. It builds the tagged
 firmware, creates a GitHub Release with generated release notes, and attaches a complete flashable
-image named `firmware-<tag>-cardputer-adv.bin`.
+image named `indi-controller-<tag>.bin`.
 
 ## Design Notes
 

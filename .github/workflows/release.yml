@@ -54,7 +54,7 @@ jobs:
         run: |
           pip install esptool
           python -m esptool --chip esp32s3 merge_bin \
-            --output "firmware-${TAG}-cardputer-adv.bin" \
+            --output "indi-controller-${TAG}.bin" \
             0x0000  .pio/build/cardputer-adv/bootloader.bin \
             0x8000  .pio/build/cardputer-adv/partitions.bin \
             0xe000  ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
@@ -63,7 +63,7 @@ jobs:
       - name: Create or update GitHub Release and upload firmware
         env:
           TAG: ${{ steps.tag.outputs.name }}
-          ASSET: firmware-${{ steps.tag.outputs.name }}-cardputer-adv.bin
+          ASSET: indi-controller-${{ steps.tag.outputs.name }}.bin
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${TAG}" --title "${TAG}" --generate-notes 2>/dev/null || true
