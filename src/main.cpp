@@ -9,6 +9,7 @@
 #include "config.h"
 #endif
 #include "config_defaults.h"
+#include "version.h"
 #include "app/ConfigStore.h"
 #include "app/RuntimeConfig.h"
 #include "camera/CameraModel.h"
@@ -25,6 +26,7 @@ constexpr uint32_t kWifiRetryMs = 10000;
 constexpr uint32_t kIndiRetryMs = 5000;
 constexpr uint32_t kRedrawMs = 500;
 constexpr uint32_t kFeedbackMs = 2500;
+constexpr uint32_t kMotionReleaseDebounceMs = 75;
 constexpr size_t kReadBufferSize = 512;
 constexpr size_t kVisibleRows = 5;
 
@@ -72,6 +74,10 @@ enum class AxisMotion { None, Negative, Positive };
 AxisMotion nsMotion = AxisMotion::None;
 AxisMotion weMotion = AxisMotion::None;
 bool motionArmed = false;
+bool nsReleasePending = false;
+bool weReleasePending = false;
+uint32_t nsReleaseSince = 0;
+uint32_t weReleaseSince = 0;
 char feedback[48]{};
 uint32_t feedbackUntil = 0;
 uint16_t feedbackColor = TFT_CYAN;
@@ -422,13 +428,31 @@ void stopMountMotion() {
     stopped |= sendSwitchCommand(model.property("TELESCOPE_MOTION_WE"), nullptr);
     weMotion = AxisMotion::None;
   }
+  nsReleasePending = weReleasePending = false;
   if (stopped) setFeedback("Motion stopped");
+}
+
+AxisMotion debounceMotionRelease(AxisMotion desired, AxisMotion sent, bool keysReleased,
+                                 bool& releasePending, uint32_t& releaseSince) {
+  if (desired != AxisMotion::None || sent == AxisMotion::None || !keysReleased) {
+    releasePending = false;
+    return desired;
+  }
+  if (!releasePending) {
+    releasePending = true;
+    releaseSince = millis();
+    return sent;
+  }
+  if (millis() - releaseSince < kMotionReleaseDebounceMs) return sent;
+  releasePending = false;
+  return AxisMotion::None;
 }
 
 void pollMountMotion() {
   if (screen != Screen::Mount || !indiClient.connected()) {
     nsMotion = weMotion = AxisMotion::None;
     motionArmed = false;
+    nsReleasePending = weReleasePending = false;
     return;
   }
   const bool north = M5Cardputer.Keyboard.isKeyPressed(';');
@@ -436,14 +460,19 @@ void pollMountMotion() {
   const bool west = M5Cardputer.Keyboard.isKeyPressed(',');
   const bool east = M5Cardputer.Keyboard.isKeyPressed('/');
   if (!motionArmed) {
+    nsReleasePending = weReleasePending = false;
     if (!north && !south && !west && !east) motionArmed = true;
     return;
   }
 
-  const AxisMotion desiredNS =
+  const AxisMotion rawNS =
       north == south ? AxisMotion::None : (north ? AxisMotion::Negative : AxisMotion::Positive);
-  const AxisMotion desiredWE =
+  const AxisMotion rawWE =
       west == east ? AxisMotion::None : (west ? AxisMotion::Negative : AxisMotion::Positive);
+  const AxisMotion desiredNS =
+      debounceMotionRelease(rawNS, nsMotion, !north && !south, nsReleasePending, nsReleaseSince);
+  const AxisMotion desiredWE =
+      debounceMotionRelease(rawWE, weMotion, !west && !east, weReleasePending, weReleaseSince);
   mount::Model model = currentMount();
   setAxisMotion(model.property("TELESCOPE_MOTION_NS"), desiredNS, nsMotion, "MOTION_NORTH",
                 "MOTION_SOUTH", "Moving north", "Moving south");
@@ -592,6 +621,7 @@ void abortMountMotion() {
   if (sendSwitchCommand(abort, member)) {
     nsMotion = weMotion = AxisMotion::None;
     motionArmed = false;
+    nsReleasePending = weReleasePending = false;
     setFeedback("ABORT requested", TFT_RED);
   } else {
     setFeedback("Abort command failed", TFT_RED);
@@ -797,8 +827,7 @@ void drawStatusBar() {
   display.printf("%u/%u", static_cast<unsigned>(propertyCache.deviceCount()),
                  static_cast<unsigned>(propertyCache.propertyCount()));
   const int batteryLevel = M5.Power.getBatteryLevel();
-  display.setTextColor(batteryLevel >= 0 && batteryLevel <= 20 ? TFT_YELLOW : TFT_WHITE,
-                       TFT_DARKGREY);
+  display.setTextColor(TFT_BLACK, TFT_DARKGREY);
   display.setTextDatum(middle_right);
   char batteryText[6];
   if (batteryLevel >= 0 && batteryLevel <= 100) snprintf(batteryText, sizeof(batteryText), "%d%%", batteryLevel);
@@ -1104,6 +1133,10 @@ void drawCamera() {
 void drawSettings() {
   auto& display = canvas;
   drawHeader("Settings", "Arrows open/back");
+  display.setTextColor(TFT_DARKGREY, TFT_BLACK);
+  display.setTextDatum(top_right);
+  display.drawString(FW_VERSION, display.width() - 4, 23);
+  display.setTextDatum(top_left);
   constexpr size_t count = 6;
   const size_t first = (selectedSetting / kVisibleRows) * kVisibleRows;
   for (size_t i = first; i < count && i < first + kVisibleRows; ++i) {

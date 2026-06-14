@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Stamp odd-minor development versions with the next repository commit count.
+set -euo pipefail
+
+VERSION_FILE="$(git rev-parse --show-toplevel)/src/version.h"
+
+if git rev-parse --verify HEAD >/dev/null 2>&1; then
+    COMMIT=$(( $(git rev-list --count HEAD) + 1 ))
+else
+    COMMIT=1
+fi
+
+if [[ ! -f "$VERSION_FILE" ]]; then
+    echo "pre-commit: warning: $VERSION_FILE not found, skipping" >&2
+    exit 0
+fi
+
+if ! grep -qE '#define FW_VERSION "[0-9]+\.[0-9]+' "$VERSION_FILE"; then
+    echo "pre-commit: warning: FW_VERSION not found in $VERSION_FILE, skipping" >&2
+    exit 0
+fi
+
+# Even minor versions are releases; their optional bug-fix number is manual.
+MINOR=$(grep -oE '#define FW_VERSION "[0-9]+\.[0-9]+' "$VERSION_FILE" \
+        | grep -oE '[0-9]+$')
+if (( MINOR % 2 == 0 )); then
+    CURRENT_VERSION=$(grep -oE '"[0-9]+\.[0-9]+(\.[0-9]+)?"' "$VERSION_FILE" | tr -d '"')
+    echo "pre-commit: FW_VERSION is ${CURRENT_VERSION} (release version, not stamped)" >&2
+    exit 0
+fi
+
+sed -i -E \
+    "s/(#define FW_VERSION \")([0-9]+\.[0-9]+)(\.[0-9]+)?(\")/\1\2.${COMMIT}\4/" \
+    "$VERSION_FILE"
+
+git add "$VERSION_FILE"
+
+NEW_VERSION=$(grep -oE '"[0-9]+\.[0-9]+\.[0-9]+"' "$VERSION_FILE" | tr -d '"')
+echo "pre-commit: FW_VERSION stamped to ${NEW_VERSION}" >&2

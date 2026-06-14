@@ -19,7 +19,7 @@ operations without requiring a phone or laptop at the telescope.
   - Tracking mode and slew speed.
   - RA/Dec and Alt/Az coordinates when available.
 - Telescope controls:
-  - Hold-to-nudge motion in four directions.
+  - Hold-to-nudge motion in four directions, with brief key-release glitches filtered.
   - Selectable slew rates.
   - Emergency motion abort.
   - Compare the mount's configured location and UTC with live GNSS data.
@@ -31,8 +31,11 @@ operations without requiring a phone or laptop at the telescope.
 - Automatic GNSS expansion-module detection from valid NMEA traffic.
 - GNSS status screen with UTC, latitude, longitude, 3D-fix elevation, satellite count, fix status,
   and HDOP.
-- Battery percentage in the status bar.
+- High-contrast black battery percentage in the status bar.
 - INDI BLOB transfers disabled to avoid downloading images to the Cardputer.
+
+The Cardputer ADV does not expose a reliable charging state through the current M5Unified power
+API, so the status bar intentionally does not show a charging indicator.
 
 ## Compatibility
 
@@ -100,6 +103,10 @@ reports an explicit 3D fix.
 | `A` | Emergency motion abort |
 | Enter | Open property inspector |
 | Backspace | Return to device list |
+
+Releasing a held arrow key stops motion on that axis after a brief 75 ms debounce, which filters
+transient keyboard release events without affecting direction changes, emergency aborts, or stops
+caused by leaving the mount screen or losing the INDI connection.
 
 The mount GPS comparison screen shows the currently configured mount latitude, longitude, and UTC
 alongside the live GNSS values. The cached mount UTC advances locally every second for an easier
@@ -192,14 +199,51 @@ Install [PlatformIO](https://platformio.org/), connect the Cardputer ADV over US
 
 The script builds the `cardputer-adv` environment and uploads it directly to the device.
 
-To build or run the native protocol tests separately:
+To build the firmware or run the native protocol tests separately:
 
 ```bash
 ~/.platformio/penv/bin/pio run -e cardputer-adv
-~/.platformio/penv/bin/pio test -e native
+./run-tests
+```
+
+The `run-tests` script runs the PlatformIO `native` test environment by default. Like `flash`, it
+uses `$HOME/.platformio/penv/bin/pio` when available and otherwise falls back to `pio` on `PATH`.
+Set `PIO` to select a different PlatformIO executable or `PLATFORMIO_ENV` to test another
+environment:
+
+```bash
+PLATFORMIO_ENV=native ./run-tests
 ```
 
 Serial diagnostics are available at `115200` baud.
+
+### Versioning
+
+The firmware version is defined in `src/version.h` and shown at the right side of the Settings
+screen title. Install the repository's pre-commit hook once after cloning:
+
+```bash
+./scripts/install-hooks
+```
+
+Versions use `MAJOR.MINOR.COMMIT_OR_RELEASE`. The meaning of the final number depends on whether
+the minor number is odd or even:
+
+- `MAJOR` identifies a major release generation and is changed manually.
+- An odd `MINOR` identifies active development. The final number is the repository's total commit
+  count, automatically written by the pre-commit hook. It continually increases and does not reset
+  when the minor number changes. For example, `1.3.277` may later become `1.5.279`.
+- An even `MINOR` identifies a stable release. The initial release may omit the final number, such
+  as `1.0`; subsequent bug-fix releases add and manually increment it, such as `1.0.1` and
+  `1.0.2`. The pre-commit hook never modifies even-minor versions.
+
+For example, a `0.9.<commit>` development series can graduate to the stable `1.0` release.
+Further development then continues as `1.1.<commit>`, preserving the running commit count, until
+the next stable `1.2` release.
+
+Pushing a `v*` tag, such as `v1.0`, runs the GitHub Actions release workflow. It builds the tagged
+firmware, creates a GitHub Release with generated release notes, and attaches a complete flashable
+image named `firmware-<tag>-cardputer-adv.bin`.
 
 ## Design Notes
 

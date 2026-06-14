@@ -1,0 +1,70 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and release (e.g. v1.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Set release tag
+        id: tag
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          TAG="${INPUT_TAG:-$REF_NAME}"
+          echo "name=${TAG}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache PlatformIO packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+          restore-keys: ${{ runner.os }}-pio-
+
+      - name: Install PlatformIO
+        run: pip install platformio
+
+      - name: Build firmware
+        run: pio run -e cardputer-adv
+
+      - name: Merge complete flashable image
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          pip install esptool
+          python -m esptool --chip esp32s3 merge_bin \
+            --output "firmware-${TAG}-cardputer-adv.bin" \
+            0x0000  .pio/build/cardputer-adv/bootloader.bin \
+            0x8000  .pio/build/cardputer-adv/partitions.bin \
+            0xe000  ~/.platformio/packages/framework-arduinoespressif32/tools/partitions/boot_app0.bin \
+            0x10000 .pio/build/cardputer-adv/firmware.bin
+
+      - name: Create or update GitHub Release and upload firmware
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+          ASSET: firmware-${{ steps.tag.outputs.name }}-cardputer-adv.bin
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${TAG}" --title "${TAG}" --generate-notes 2>/dev/null || true
+          gh release upload "${TAG}" "${ASSET}" --clobber
