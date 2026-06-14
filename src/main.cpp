@@ -832,7 +832,7 @@ void drawStatusBar() {
   char batteryText[6];
   if (batteryLevel >= 0 && batteryLevel <= 100) snprintf(batteryText, sizeof(batteryText), "%d%%", batteryLevel);
   else strcpy(batteryText, "--%");
-  display.drawString(batteryText, 237, 9);
+  display.drawString(batteryText, 229, 9);
   display.setTextDatum(top_left);
 }
 

@@ -37,6 +37,11 @@ operations without requiring a phone or laptop at the telescope.
 The Cardputer ADV does not expose a reliable charging state through the current M5Unified power
 API, so the status bar intentionally does not show a charging indicator.
 
+A yellow `!` at the top right indicates that INDI data exceeded the firmware's bounded parser or
+property-cache capacity. Some oversized or excess properties, members, or XML content may have
+been omitted or truncated. Reconnecting to the INDI server clears the warning, but it returns if
+the limits are exceeded again.
+
 ## Compatibility
 
 The controller is capability-based. It discovers standard INDI properties instead of depending on
