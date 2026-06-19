@@ -205,6 +205,19 @@ Install [PlatformIO](https://platformio.org/), connect the Cardputer ADV over US
 
 The script builds the `cardputer-adv` environment and uploads it directly to the device.
 
+To read firmware log messages over USB serial:
+
+```bash
+./monitor
+```
+
+The monitor opens `/dev/ttyACM0` at `115200` baud by default. Set `PORT` if the Cardputer appears
+as a different serial device:
+
+```bash
+PORT=/dev/ttyUSB0 ./monitor
+```
+
 To build the firmware or run the native protocol tests separately:
 
 ```bash
@@ -212,10 +225,10 @@ To build the firmware or run the native protocol tests separately:
 ./run-tests
 ```
 
-The `run-tests` script runs the PlatformIO `native` test environment by default. Like `flash`, it
-uses `$HOME/.platformio/penv/bin/pio` when available and otherwise falls back to `pio` on `PATH`.
-Set `PIO` to select a different PlatformIO executable or `PLATFORMIO_ENV` to test another
-environment:
+The `run-tests` script runs the PlatformIO `native` test environment by default. Like `flash` and
+`monitor`, it uses `$HOME/.platformio/penv/bin/pio` when available and otherwise falls back to
+`pio` on `PATH`. Set `PIO` to select a different PlatformIO executable or `PLATFORMIO_ENV` to test
+another environment:
 
 ```bash
 PLATFORMIO_ENV=native ./run-tests

@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+PIO="${PIO:-$HOME/.platformio/penv/bin/pio}"
+PORT="${PORT:-/dev/ttyACM0}"
+
+if [[ ! -x "$PIO" ]]; then
+  if command -v pio >/dev/null 2>&1; then
+    PIO="$(command -v pio)"
+  else
+    printf 'PlatformIO was not found at %s or on PATH.\n' "$PIO" >&2
+    exit 1
+  fi
+fi
+
+cd "$PROJECT_DIR"
+
+printf 'Opening serial monitor on %s at 115200 baud...\n' "$PORT"
+"$PIO" device monitor -b 115200 --port "$PORT"
