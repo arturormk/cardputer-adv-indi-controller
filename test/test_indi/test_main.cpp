@@ -137,14 +137,14 @@ void test_writes_complete_location_and_time_vectors() {
              "<defText name=\"UTC\"></defText><defText name=\"OFFSET\"></defText>"
              "</defTextVector>", 9);
   const Property* location = cache.findProperty("Mount & Scope", "GEOGRAPHIC_COORD");
-  const NumberValue locationValues[] = {{"LAT", 41.5}, {"LONG", 357.75}, {"ELEV", 123}};
+  const NumberValue locationValues[] = {{"LAT", 41.5}, {"LONG", 357.75}, {"ELEV", 545.4}};
   char output[512];
   TEST_ASSERT_NOT_EQUAL(
       0, Writer::buildNumberVector(output, sizeof(output), *location, locationValues, 3));
   TEST_ASSERT_EQUAL_STRING(
       "<newNumberVector device=\"Mount &amp; Scope\" name=\"GEOGRAPHIC_COORD\">"
       "<oneNumber name=\"LAT\">41.5</oneNumber><oneNumber name=\"LONG\">357.75</oneNumber>"
-      "<oneNumber name=\"ELEV\">123</oneNumber></newNumberVector>\n",
+      "<oneNumber name=\"ELEV\">545.4</oneNumber></newNumberVector>\n",
       output);
 
   const Property* time = cache.findProperty("Mount & Scope", "TIME_UTC");

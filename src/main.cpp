@@ -345,10 +345,13 @@ void syncMountFromGnss() {
   char utcValue[32];
   snprintf(utcValue, sizeof(utcValue), "%04u-%02u-%02uT%02u:%02u:%02u", snapshot.year,
            snapshot.month, snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);
+  const bool useGpsElevation =
+      snapshot.fixDimension == gnss::FixDimension::ThreeD && snapshot.altitudeValid;
+  const double elevationValue = useGpsElevation ? snapshot.altitudeMeters : elevation->numberValue;
   const indi::NumberValue locationValues[] = {
       {latitude->name, snapshot.latitude},
       {longitude->name, mount::longitudeToIndi(snapshot.longitude)},
-      {elevation->name, elevation->numberValue},
+      {elevation->name, elevationValue},
   };
   const indi::TextValue timeValues[] = {{utc->name, utcValue}, {offset->name, "0"}};
   char locationXml[512];
@@ -372,8 +375,9 @@ void syncMountFromGnss() {
     setFeedback("GPS sync write failed", TFT_RED);
     return;
   }
-  Serial.printf("[indi] sent GPS location and UTC to %s\n", location->device);
-  setFeedback("GPS location and UTC sent");
+  Serial.printf("[indi] sent GPS location%s and UTC to %s\n",
+                useGpsElevation ? "/elevation" : "", location->device);
+  setFeedback(useGpsElevation ? "GPS location, elevation, UTC sent" : "GPS location and UTC sent");
 }
 
 void resetMountUtcClock() {
@@ -1076,28 +1080,37 @@ void drawMountGps() {
   drawHeader("Mount GPS Sync", "Enter sends GPS | Backspace mount");
   const indi::Member* latitude = model.member("GEOGRAPHIC_COORD", "LAT");
   const indi::Member* longitude = model.member("GEOGRAPHIC_COORD", "LONG");
+  const indi::Member* elevation = model.member("GEOGRAPHIC_COORD", "ELEV");
   const gnss::Snapshot snapshot = gnss::current();
+  const bool gpsElevationValid =
+      snapshot.fixDimension == gnss::FixDimension::ThreeD && snapshot.altitudeValid;
 
   display.setTextColor(TFT_WHITE, TFT_BLACK);
-  display.setCursor(4, 39);
+  display.setCursor(4, 34);
   if (latitude) display.printf("Mount LAT: %+.6f", latitude->numberValue);
   else display.print("Mount LAT: --");
-  display.setCursor(4, 54);
+  display.setCursor(4, 47);
   if (longitude) display.printf("Mount LON: %+.6f", mount::longitudeFromIndi(longitude->numberValue));
   else display.print("Mount LON: --");
-  display.setCursor(4, 69);
+  display.setCursor(4, 60);
+  if (elevation) display.printf("Mount ELEV: %.1fm", elevation->numberValue);
+  else display.print("Mount ELEV: --");
+  display.setCursor(4, 73);
   char mountUtc[32];
   if (currentMountUtc(mountUtc, sizeof(mountUtc))) display.printf("Mount UTC: %s", mountUtc);
   else display.print("Mount UTC: --");
 
   display.setTextColor(snapshot.locationValid ? TFT_CYAN : TFT_YELLOW, TFT_BLACK);
-  display.setCursor(4, 84);
+  display.setCursor(4, 86);
   if (snapshot.locationValid) display.printf("GPS   LAT: %+.6f", snapshot.latitude);
   else display.print("GPS   LAT: --");
   display.setCursor(4, 99);
   if (snapshot.locationValid) display.printf("GPS   LON: %+.6f", snapshot.longitude);
   else display.print("GPS   LON: --");
-  display.setCursor(4, 114);
+  display.setCursor(4, 112);
+  if (gpsElevationValid) display.printf("GPS   ELEV: %.1fm", snapshot.altitudeMeters);
+  else display.print("GPS   ELEV: --");
+  display.setCursor(4, 125);
   if (snapshot.dateTimeValid) {
     display.printf("GPS UTC: %04u-%02u-%02uT%02u:%02u:%02u", snapshot.year, snapshot.month,
                    snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);

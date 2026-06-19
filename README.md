@@ -114,9 +114,10 @@ Releasing a held arrow key stops motion on that axis after a brief 75 ms debounc
 transient keyboard release events without affecting direction changes, emergency aborts, or stops
 caused by leaving the mount screen or losing the INDI connection.
 
-The mount GPS comparison screen shows the currently configured mount latitude, longitude, and UTC
-alongside the live GNSS values. The cached mount UTC advances locally every second for an easier
-comparison and re-anchors whenever the INDI driver reports a changed `TIME_UTC` value.
+The mount GPS comparison screen shows the currently configured mount latitude, longitude,
+elevation, and UTC alongside the live GNSS values. The cached mount UTC advances locally every
+second for an easier comparison and re-anchors whenever the INDI driver reports a changed
+`TIME_UTC` value.
 
 Press Enter on the comparison screen to send the GNSS position and UTC. Synchronization requires:
 
@@ -124,10 +125,11 @@ Press Enter on the comparison screen to send the GNSS position and UTC. Synchron
 - An active INDI connection.
 - Writable `GEOGRAPHIC_COORD` and `TIME_UTC` properties containing the standard members.
 
-The complete `GEOGRAPHIC_COORD` vector is sent with `LAT`, `LONG`, and the mount's existing `ELEV`
-value. GNSS elevation is intentionally display-only and is not sent to the mount. Negative GNSS
-longitudes are converted to INDI's eastward `0..360` degree convention. The complete `TIME_UTC`
-vector is sent with UTC formatted as `YYYY-MM-DDTHH:MM:SS` and `OFFSET` set to `0`.
+The complete `GEOGRAPHIC_COORD` vector is sent with `LAT`, `LONG`, and `ELEV`. GNSS elevation is
+sent when the receiver reports a valid 3D elevation; otherwise the mount's existing `ELEV` value is
+preserved. Negative GNSS longitudes are converted to INDI's eastward `0..360` degree convention.
+The complete `TIME_UTC` vector is sent with UTC formatted as `YYYY-MM-DDTHH:MM:SS` and `OFFSET`
+set to `0`.
 
 Synchronization is all-or-nothing from the UI: if any required value, property, or member is
 missing or read-only, no update is sent.
