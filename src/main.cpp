@@ -480,7 +480,7 @@ void pollMountMotion() {
                 "MOTION_EAST", "Moving west", "Moving east");
 }
 
-void changeSlewRate(int direction) {
+void selectSlewRate(size_t index) {
   mount::Model model = currentMount();
   const indi::Property* property = model.property("TELESCOPE_SLEW_RATE");
   const size_t count = model.slewRateCount();
@@ -488,12 +488,8 @@ void changeSlewRate(int direction) {
     setFeedback("Slew speed unavailable", TFT_YELLOW);
     return;
   }
-  int index = model.activeSlewRateIndex();
-  if (index < 0) index = 0;
-  index += direction;
-  if (index < 0) index = 0;
-  if (index >= static_cast<int>(count)) index = static_cast<int>(count) - 1;
-  const indi::Member* rate = model.slewRate(static_cast<size_t>(index));
+  if (index >= count) index = count - 1;
+  const indi::Member* rate = model.slewRate(index);
   if (rate && sendSwitchCommand(property, rate->name)) {
     char message[48];
     snprintf(message, sizeof(message), "Speed: %.35s", *rate->label ? rate->label : rate->name);
@@ -501,6 +497,21 @@ void changeSlewRate(int direction) {
   } else {
     setFeedback("Speed command failed", TFT_RED);
   }
+}
+
+void changeSlewRate(int direction) {
+  mount::Model model = currentMount();
+  const size_t count = model.slewRateCount();
+  if (count == 0) {
+    selectSlewRate(0);
+    return;
+  }
+  int index = model.activeSlewRateIndex();
+  if (index < 0) index = 0;
+  index += direction;
+  if (index < 0) index = 0;
+  if (index >= static_cast<int>(count)) index = static_cast<int>(count) - 1;
+  selectSlewRate(static_cast<size_t>(index));
 }
 
 void toggleDeviceConnection() {
@@ -1000,7 +1011,7 @@ void drawMount() {
     drawDevices();
     return;
   }
-  drawHeader(device->name, "Arrows | [] speed | G GPS | C | A!");
+  drawHeader(device->name, "Arrows | []/1-9 speed | G | C | A!");
 
   const indi::Member* connection = model.activeMember("CONNECTION");
   const bool connected = connection && strcmp(connection->name, "CONNECT") == 0;
@@ -1289,6 +1300,9 @@ void handleKeyboard() {
         handled = true;
       } else if (key == ']') {
         changeSlewRate(1);
+        handled = true;
+      } else if (key >= '1' && key <= '9') {
+        selectSlewRate(static_cast<size_t>(key - '1'));
         handled = true;
       } else if (key == 'c' || key == 'C') {
         stopMountMotion();

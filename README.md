@@ -103,6 +103,7 @@ reports an explicit 3D fix.
 | Hold arrow keys | Nudge north, south, west, or east |
 | Release arrow key | Stop motion on that axis |
 | `[` / `]` | Previous / next slew rate |
+| `1` - `9` | Select slew rate slot directly |
 | `C` | Connect / disconnect |
 | `G` | Compare mount location/time with GNSS |
 | `A` | Emergency motion abort |
