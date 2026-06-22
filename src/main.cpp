@@ -1077,7 +1077,7 @@ void drawMountGps() {
     drawDevices();
     return;
   }
-  drawHeader("Mount GPS Sync", "Enter sends GPS | Backspace mount");
+  drawHeader("", "Enter sends GPS | Backspace mount");
   const indi::Member* latitude = model.member("GEOGRAPHIC_COORD", "LAT");
   const indi::Member* longitude = model.member("GEOGRAPHIC_COORD", "LONG");
   const indi::Member* elevation = model.member("GEOGRAPHIC_COORD", "ELEV");
@@ -1086,31 +1086,31 @@ void drawMountGps() {
       snapshot.fixDimension == gnss::FixDimension::ThreeD && snapshot.altitudeValid;
 
   display.setTextColor(TFT_WHITE, TFT_BLACK);
-  display.setCursor(4, 34);
+  display.setCursor(4, 21);
   if (latitude) display.printf("Mount LAT: %+.6f", latitude->numberValue);
   else display.print("Mount LAT: --");
-  display.setCursor(4, 47);
+  display.setCursor(4, 34);
   if (longitude) display.printf("Mount LON: %+.6f", mount::longitudeFromIndi(longitude->numberValue));
   else display.print("Mount LON: --");
-  display.setCursor(4, 60);
+  display.setCursor(4, 47);
   if (elevation) display.printf("Mount ELEV: %.1fm", elevation->numberValue);
   else display.print("Mount ELEV: --");
-  display.setCursor(4, 73);
+  display.setCursor(4, 60);
   char mountUtc[32];
   if (currentMountUtc(mountUtc, sizeof(mountUtc))) display.printf("Mount UTC: %s", mountUtc);
   else display.print("Mount UTC: --");
 
   display.setTextColor(snapshot.locationValid ? TFT_CYAN : TFT_YELLOW, TFT_BLACK);
-  display.setCursor(4, 86);
+  display.setCursor(4, 73);
   if (snapshot.locationValid) display.printf("GPS   LAT: %+.6f", snapshot.latitude);
   else display.print("GPS   LAT: --");
-  display.setCursor(4, 99);
+  display.setCursor(4, 86);
   if (snapshot.locationValid) display.printf("GPS   LON: %+.6f", snapshot.longitude);
   else display.print("GPS   LON: --");
-  display.setCursor(4, 112);
+  display.setCursor(4, 99);
   if (gpsElevationValid) display.printf("GPS   ELEV: %.1fm", snapshot.altitudeMeters);
   else display.print("GPS   ELEV: --");
-  display.setCursor(4, 125);
+  display.setCursor(4, 112);
   if (snapshot.dateTimeValid) {
     display.printf("GPS UTC: %04u-%02u-%02uT%02u:%02u:%02u", snapshot.year, snapshot.month,
                    snapshot.day, snapshot.hour, snapshot.minute, snapshot.second);

@@ -19,6 +19,8 @@ Changes introduced after `v1.0`.
 
 ### Changed
 
+- Removed the mount GPS sync screen title and shifted its comparison rows upward so the GPS UTC
+  row no longer overlaps the bottom help text.
 - Renamed release firmware assets from `firmware-<tag>-cardputer-adv.bin` to
   `indi-controller-<tag>.bin`.
 - Bumped the firmware version metadata from `1.0` to `1.1.6`.
